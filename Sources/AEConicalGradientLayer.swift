@@ -54,12 +54,13 @@ open class AEConicalGradientLayer: CALayer {
         }
     }
     
+    public var computeQueue: DispatchQueue = .global(qos: .userInitiated)
     // MARK: - Properties
     
     /// The array of UIColor objects defining the color of each gradient stop.
     /// Defaults to empty array. Animatable.
 
-    open var colors = [UIColor]() { didSet { setNeedsDisplay() } }
+    open var colors = [UIColor]() // { didSet { setNeedsDisplay() } }
     
     /// The array of Double values defining the location of each
     /// gradient stop as a value in the range [0,1]. The values must be
@@ -67,9 +68,13 @@ open class AEConicalGradientLayer: CALayer {
     /// assumed to spread uniformly across the [0,1] range.
     /// Defaults to nil. Animatable.
     
-    open var locations = [Double]() { didSet { setNeedsDisplay() } }
+    open var locations = [Double]() // { didSet { setNeedsDisplay() } }
     
-    fileprivate var transitions = [Transition]()
+    fileprivate var transitions = [Transition]() {
+        didSet {
+            super.setNeedsDisplay()
+        }
+    }
     
     // MARK: - Lifecycle
     
@@ -80,11 +85,13 @@ open class AEConicalGradientLayer: CALayer {
         UIGraphicsPopContext()
     }
     
+    open override func setNeedsDisplay() {
+        loadTransitions {}
+    }
+    
     // MARK: - Helpers
     
     fileprivate func drawRect(_ rect: CGRect) {
-        loadTransitions()
-        
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let longerSide = max(rect.width, rect.height)
         let radius = Double(longerSide) * M_SQRT2
@@ -118,32 +125,44 @@ open class AEConicalGradientLayer: CALayer {
         return UIColor(hue: CGFloat(hue / Constants.MaxHue), saturation: 1.0, brightness: 1.0, alpha: 1.0)
     }
     
-    fileprivate func loadTransitions() {
+    fileprivate func loadTransitions(completion: @escaping ()->()) {
         transitions.removeAll()
+        let colors = self.colors
+        let locations = self.locations
         
-        if colors.count > 1 {
-            let transitionsCount = colors.count - 1
-            let locationStep = 1.0 / Double(transitionsCount)
+        computeQueue.async {
+            var transitions = [Transition]()
             
-            for i in 0 ..< transitionsCount {
-                let fromLocation, toLocation: Double
-                let fromColor, toColor: UIColor
+            if colors.count > 1 {
+                let transitionsCount = colors.count - 1
+                let locationStep = 1.0 / Double(transitionsCount)
                 
-                if locations.count == colors.count {
-                    fromLocation = locations[i]
-                    toLocation = locations[i + 1]
-                } else {
-                    fromLocation = locationStep * Double(i)
-                    toLocation = locationStep * Double(i + 1)
+                for i in 0 ..< transitionsCount {
+                    let fromLocation, toLocation: Double
+                    let fromColor, toColor: UIColor
+                    
+                    if locations.count == colors.count {
+                        fromLocation = locations[i]
+                        toLocation = locations[i + 1]
+                    } else {
+                        fromLocation = locationStep * Double(i)
+                        toLocation = locationStep * Double(i + 1)
+                    }
+                    
+                    fromColor = colors[i]
+                    toColor = colors[i + 1]
+                    
+                    let transition = Transition(fromLocation: fromLocation, toLocation: toLocation, fromColor: fromColor, toColor: toColor)
+                    transitions.append(transition)
                 }
-                
-                fromColor = colors[i]
-                toColor = colors[i + 1]
-                
-                let transition = Transition(fromLocation: fromLocation, toLocation: toLocation, fromColor: fromColor, toColor: toColor)
-                transitions.append(transition)
+            }
+            
+            DispatchQueue.main.async {
+                self.transitions = transitions
+                completion()
             }
         }
+        
     }
     
     fileprivate func transitionForPercent(_ percent: Double) -> Transition? {
